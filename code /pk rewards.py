@@ -53,13 +53,14 @@ def filter_by_goal(data, bean_goal, selected_types, min_rebate, min_beans):
         if e["Win Beans"] >= bean_goal and e["Rebate %"] >= min_rebate and e["Win Beans"] >= min_beans
     ])
 
-def show_best(df):
-    best = df.iloc[0]
-    st.subheader("🏆 Best Match")
-    st.metric("PK Type", best["PK Type"])
-    st.metric("Diamonds", best["Diamonds"])
-    st.metric("Win Beans", best["Win Beans"])
-    st.metric("Rebate %", f'{best["Rebate %"] * 100:.2f}%')
+def show_best(df, metric="Win Beans"):
+    if df.empty:
+        st.warning("No qualifying entries.")
+        return
+    max_value = df[metric].max()
+    top_entries = df[df[metric] == max_value]
+    st.subheader(f"🏆 Top Tiers by {metric}")
+    st.dataframe(top_entries.reset_index(drop=True))
 
 def generate_excel_download(df, filename, label="📥 Download Excel"):
     buffer = BytesIO()
@@ -68,14 +69,14 @@ def generate_excel_download(df, filename, label="📥 Download Excel"):
     st.download_button(label=label, data=buffer, file_name=filename,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# --- UI Config ---
+# --- App Interface ---
 st.set_page_config(page_title="PK Rebate Explorer", layout="centered")
 st.title("💎→🫘 PK Rebate Explorer")
 
 rebate_data = sanitize_rebate_data(rebate_data)
 tab1, tab2 = st.tabs(["💎 Diamond-Based Search", "🫘 Goal-Based Search"])
 
-# --- Tab 1: Diamonds ---
+# --- Tab 1: Diamond-Based ---
 with tab1:
     st.markdown("### 💠 Diamond-Based Search")
     diamonds = st.number_input("Diamond Amount", min_value=0, value=1000, step=100)
@@ -89,7 +90,7 @@ with tab1:
     df1 = filter_by_diamonds(rebate_data, diamonds, selected_types, min_rebate, min_beans)
     if not df1.empty:
         df1 = df1.sort_values(by=sort1, ascending=False)
-        show_best(df1)
+        show_best(df1, metric=sort1)
         st.markdown("---")
         st.subheader("📊 All Matching PK Tiers")
         st.dataframe(df1.reset_index(drop=True))
@@ -97,7 +98,7 @@ with tab1:
     else:
         st.warning("No matching results for that diamond amount and filter criteria.")
 
-# --- Tab 2: Goal Beans ---
+# --- Tab 2: Goal-Based ---
 with tab2:
     st.markdown("### 🎯 Goal-Based Search")
     beans = st.number_input("Win Beans Goal", min_value=0, value=1000, step=50)
@@ -111,7 +112,7 @@ with tab2:
     df2 = filter_by_goal(rebate_data, beans, selected_types, min_rebate, min_beans)
     if not df2.empty:
         df2 = df2.sort_values(by=sort2, ascending=(sort2 == "Diamonds"))
-        show_best(df2)
+        show_best(df2, metric=sort2)
         st.markdown("---")
         st.subheader("📊 Recommended PK Tiers")
         st.dataframe(df2.reset_index(drop=True))
@@ -119,6 +120,6 @@ with tab2:
     else:
         st.warning("No rebate tiers meet your win bean goal and filter criteria.")
 
-# --- Debug Panel (Hidden by Default) ---
+# --- Debug Panel (Collapsed by Default) ---
 with st.expander("🛠 Debug Panel", expanded=False):
     st.json({k: v[:1] for k, v in rebate_data.items()})
