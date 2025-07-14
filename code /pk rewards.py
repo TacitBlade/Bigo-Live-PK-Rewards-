@@ -37,18 +37,20 @@ def sanitize_rebate_data(data):
         for pk, entries in data.items()
     }
 
-def filter_by_diamonds(data, diamonds):
+def filter_by_diamonds(data, diamonds, selected_types, min_rebate, min_beans):
     return pd.DataFrame([
         {**e, "PK Type": pk}
-        for pk, entries in data.items()
-        for e in entries if e["Diamonds"] <= diamonds
+        for pk, entries in data.items() if pk in selected_types
+        for e in entries
+        if e["Diamonds"] <= diamonds and e["Rebate %"] >= min_rebate and e["Win Beans"] >= min_beans
     ])
 
-def filter_by_goal(data, bean_goal):
+def filter_by_goal(data, bean_goal, selected_types, min_rebate, min_beans):
     return pd.DataFrame([
         {**e, "PK Type": pk}
-        for pk, entries in data.items()
-        for e in entries if e["Win Beans"] >= bean_goal
+        for pk, entries in data.items() if pk in selected_types
+        for e in entries
+        if e["Win Beans"] >= bean_goal and e["Rebate %"] >= min_rebate and e["Win Beans"] >= min_beans
     ])
 
 def show_best(df):
@@ -79,15 +81,21 @@ with tab1:
     diamonds = st.number_input("Diamond Amount", min_value=0, value=1000, step=100)
     sort1 = st.selectbox("Sort by", ["Win Beans", "Rebate %"], key="sort1")
 
-    df1 = filter_by_diamonds(rebate_data, diamonds)
+    st.markdown("### 🧮 Tier Filters")
+    selected_types = st.multiselect("Select PK Types", list(rebate_data.keys()), default=list(rebate_data.keys()))
+    min_rebate = st.slider("Minimum Rebate %", 0.0, 0.5, 0.0, 0.01)
+    min_beans = st.number_input("Minimum Win Beans", min_value=0, value=0, step=50)
+
+    df1 = filter_by_diamonds(rebate_data, diamonds, selected_types, min_rebate, min_beans)
     if not df1.empty:
         df1 = df1.sort_values(by=sort1, ascending=False)
         show_best(df1)
         st.markdown("---")
+        st.subheader("📊 All Matching PK Tiers")
         st.dataframe(df1.reset_index(drop=True))
         generate_excel_download(df1, f"diamond_search_{diamonds}.xlsx")
     else:
-        st.warning("No matching results for that diamond amount.")
+        st.warning("No matching results for that diamond amount and filter criteria.")
 
 # --- Tab 2: Goal Beans ---
 with tab2:
@@ -95,16 +103,22 @@ with tab2:
     beans = st.number_input("Win Beans Goal", min_value=0, value=1000, step=50)
     sort2 = st.selectbox("Sort by", ["Diamonds", "Rebate %"], key="sort2")
 
-    df2 = filter_by_goal(rebate_data, beans)
+    st.markdown("### 🧮 Tier Filters")
+    selected_types = st.multiselect("Select PK Types", list(rebate_data.keys()), default=list(rebate_data.keys()), key="types2")
+    min_rebate = st.slider("Minimum Rebate %", 0.0, 0.5, 0.0, 0.01, key="rebate2")
+    min_beans = st.number_input("Minimum Win Beans", min_value=0, value=0, step=50, key="beans2")
+
+    df2 = filter_by_goal(rebate_data, beans, selected_types, min_rebate, min_beans)
     if not df2.empty:
         df2 = df2.sort_values(by=sort2, ascending=(sort2 == "Diamonds"))
         show_best(df2)
         st.markdown("---")
+        st.subheader("📊 Recommended PK Tiers")
         st.dataframe(df2.reset_index(drop=True))
         generate_excel_download(df2, f"goal_search_{beans}.xlsx")
     else:
-        st.warning("No rebate tiers meet or exceed that win bean goal.")
+        st.warning("No rebate tiers meet your win bean goal and filter criteria.")
 
-# --- Debug (Hidden by Default) ---
+# --- Debug Panel (Hidden by Default) ---
 with st.expander("🛠 Debug Panel", expanded=False):
     st.json({k: v[:1] for k, v in rebate_data.items()})
