@@ -1,114 +1,76 @@
 import streamlit as st
-import openpyxl
-from openpyxl import Workbook
-from openpyxl.styles import Font
 import pandas as pd
-import tempfile
-import os
 
-# Read and validate PK data
-def read_rules_rewards(sheet):
-    pk_data = []
-    for row in sheet.iter_rows(min_row=2, values_only=True):
-        pk_type, pk_points, win_reward = row[0], row[1], row[2]
+# Rebate dataset from Excel reference
+rebate_data = {
+    "Daily PK": [...],      # Same structure as before
+    "Talent PK": [...],
+    "Star Tasks": [...]
+}
 
-        if pk_type is None or pk_points is None or win_reward is None:
-            continue
-        if not isinstance(pk_points, (int, float)) or not isinstance(win_reward, (int, float)):
-            continue
+st.title("💎→🫘 PK Rebate Explorer")
 
-        pk_data.append({
-            "pk_type": str(pk_type),
-            "pk_points": int(pk_points),
-            "win_reward": float(win_reward)
-        })
-    return pk_data
+# Choose mode
+mode = st.radio("Select Mode", ["Diamond-Based", "Goal-Based"])
 
-# Maximize total win rewards given score limit
-def optimize_rewards(pk_data, max_score):
-    pk_data.sort(key=lambda x: x["win_reward"] / x["pk_points"], reverse=True)
-    allocation = []
-    remaining_score = max_score
+# Sort preference
+sort_by = st.selectbox("Sort By", ["Win Beans", "Rebate %"])
 
-    for option in pk_data:
-        if option["pk_points"] <= remaining_score:
-            uses = remaining_score // option["pk_points"]
-            total_points = uses * option["pk_points"]
-            total_reward = uses * option["win_reward"]
-            allocation.append({
-                "PK Type": option["pk_type"],
-                "Points Each": option["pk_points"],
-                "Win Reward Each": option["win_reward"],
-                "Uses": uses,
-                "Total Points": total_points,
-                "Total Reward": total_reward
-            })
-            remaining_score -= total_points
+result_df = pd.DataFrame()
+best_option = None
 
-    return allocation, max_score - remaining_score
+if mode == "Diamond-Based":
+    diamond_input = st.number_input("Enter Diamond Amount", min_value=0, value=1000, step=100)
+    
+    all_results = []
+    for pk_type, entries in rebate_data.items():
+        for entry in entries:
+            if entry["Diamonds"] <= diamond_input:
+                entry_copy = entry.copy()
+                entry_copy["PK Type"] = pk_type
+                all_results.append(entry_copy)
 
-# Generate Excel download
-def generate_excel(allocation, diamonds, total_used_score):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Optimized Allocation"
+    if all_results:
+        result_df = pd.DataFrame(all_results)
+        
+elif mode == "Goal-Based":
+    bean_goal = st.number_input("Enter Goal Win Beans", min_value=0, value=1000, step=50)
 
-    header_font = Font(bold=True)
-    ws.append(["Diamonds Used", diamonds])
-    ws.append(["Score Target", diamonds * 10])
-    ws.append(["Score Utilized", total_used_score])
-    ws.append([])
+    candidates = []
+    for pk_type, entries in rebate_data.items():
+        for entry in entries:
+            if entry["Win Beans"] >= bean_goal:
+                entry_copy = entry.copy()
+                entry_copy["PK Type"] = pk_type
+                candidates.append(entry_copy)
 
-    ws.append(["PK Type", "Points Each", "Win Reward Each", "Uses", "Total Points", "Total Reward"])
-    for row in allocation:
-        ws.append([
-            row["PK Type"],
-            row["Points Each"],
-            row["Win Reward Each"],
-            row["Uses"],
-            row["Total Points"],
-            row["Total Reward"]
-        ])
-    for cell in ws["6:6"]:
-        cell.font = header_font
+    if candidates:
+        result_df = pd.DataFrame(candidates)
 
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-    wb.save(temp_file.name)
-    return temp_file.name
+# Display results
+if not result_df.empty:
+    if sort_by == "Win Beans":
+        result_df = result_df.sort_values(by="Win Beans", ascending=False)
+    else:
+        result_df = result_df.sort_values(by="Rebate %", ascending=False)
 
-# Streamlit UI
-st.set_page_config(page_title="PK Reward Maximizer", layout="centered")
-st.title("💎 PK Score-Based Reward Optimizer")
+    best_option = result_df.iloc[0]
 
-uploaded_file = st.file_uploader("📤 Upload your event Excel file (.xlsx)")
-diamonds = st.number_input("Enter number of diamonds", min_value=0, value=0, step=1)
+    st.subheader("🏆 Best Match")
+    st.metric("PK Type", best_option["PK Type"])
+    st.metric("Diamonds", best_option["Diamonds"])
+    st.metric("Win Beans", best_option["Win Beans"])
+    st.metric("Rebate %", f'{best_option["Rebate %"] * 100:.2f}%')
 
-if uploaded_file and diamonds:
-    try:
-        wb = openpyxl.load_workbook(uploaded_file, data_only=True)
-        if "Rules and rewards" not in wb.sheetnames:
-            st.error("Sheet 'Rules and rewards' not found.")
-        else:
-            sheet = wb["Rules and rewards"]
-            pk_data = read_rules_rewards(sheet)
-            score_limit = diamonds * 10
+    st.subheader("📊 All Matching Tiers")
+    st.dataframe(result_df.reset_index(drop=True))
 
-            allocation, total_used_score = optimize_rewards(pk_data, score_limit)
+    # Optional Excel export
+    st.subheader("📥 Export Data")
+    filename = f"rebate_results_{mode.lower()}.xlsx"
+    result_df.to_excel(filename, index=False)
+    with open(filename, "rb") as f:
+        st.download_button("Download Excel", f, file_name=filename, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-            if allocation:
-                st.success("✅ Optimization complete.")
-                st.write(f"💎 Diamonds: {diamonds}")
-                st.write(f"🏁 Score Limit: {score_limit}")
-                st.write(f"🔥 Score Used: {total_used_score}")
-
-                df = pd.DataFrame(allocation)
-                st.dataframe(df, use_container_width=True)
-
-                excel_file = generate_excel(allocation, diamonds, total_used_score)
-                with open(excel_file, "rb") as f:
-                    st.download_button("📥 Download Excel Breakdown", f, file_name="pk_reward_allocation.xlsx")
-                os.remove(excel_file)
-            else:
-                st.warning("No PK options fit within your score limit.")
-    except Exception as e:
-        st.error(f"⚠️ Error processing file: {e}")
+else:
+    st.warning("No matching results found for your input.")
