@@ -1,13 +1,12 @@
 import streamlit as st
 import openpyxl
-from openpyxl.styles import Font
 from openpyxl import Workbook
+from openpyxl.styles import Font
+import pandas as pd
 import tempfile
 import os
-import pandas as pd
-import matplotlib.pyplot as plt
 
-# Read and validate PK rules and rewards
+# Read and validate PK data
 def read_rules_rewards(sheet):
     pk_data = []
     for row in sheet.iter_rows(min_row=2, values_only=True):
@@ -15,111 +14,101 @@ def read_rules_rewards(sheet):
 
         if pk_type is None or pk_points is None or win_reward is None:
             continue
-        if not isinstance(pk_points, (int, float)):
+        if not isinstance(pk_points, (int, float)) or not isinstance(win_reward, (int, float)):
             continue
 
-        diamonds_needed = int(pk_points / 10)
         pk_data.append({
-            "pk_type": pk_type,
-            "pk_points": pk_points,
-            "win_reward": win_reward,
-            "diamonds_needed": diamonds_needed
+            "pk_type": str(pk_type),
+            "pk_points": int(pk_points),
+            "win_reward": float(win_reward)
         })
     return pk_data
 
-# Compute most efficient PK
-def calculate_efficiency(pk_data, diamonds_available):
-    options = [pk for pk in pk_data if pk["diamonds_needed"] <= diamonds_available]
-    if not options:
-        return None
-    return max(options, key=lambda x: x["win_reward"] / x["diamonds_needed"])
+# Maximize total win rewards given score limit
+def optimize_rewards(pk_data, max_score):
+    pk_data.sort(key=lambda x: x["win_reward"] / x["pk_points"], reverse=True)
+    allocation = []
+    remaining_score = max_score
 
-# Create Excel file for optimal PK breakdown
-def generate_excel(optimal_pk, diamonds_available):
+    for option in pk_data:
+        if option["pk_points"] <= remaining_score:
+            uses = remaining_score // option["pk_points"]
+            total_points = uses * option["pk_points"]
+            total_reward = uses * option["win_reward"]
+            allocation.append({
+                "PK Type": option["pk_type"],
+                "Points Each": option["pk_points"],
+                "Win Reward Each": option["win_reward"],
+                "Uses": uses,
+                "Total Points": total_points,
+                "Total Reward": total_reward
+            })
+            remaining_score -= total_points
+
+    return allocation, max_score - remaining_score
+
+# Generate Excel download
+def generate_excel(allocation, diamonds, total_used_score):
     wb = Workbook()
     ws = wb.active
-    ws.title = "PK Efficiency"
+    ws.title = "Optimized Allocation"
 
     header_font = Font(bold=True)
-    ws.append(["Diamonds Available", diamonds_available])
-    ws.append(["PK Type", optimal_pk["pk_type"]])
-    ws.append(["PK Points", optimal_pk["pk_points"]])
-    ws.append(["Diamonds Needed", optimal_pk["diamonds_needed"]])
-    ws.append(["Win Reward", optimal_pk["win_reward"]])
-    ws.append(["Efficiency (Reward/Diamond)", round(optimal_pk["win_reward"] / optimal_pk["diamonds_needed"], 2)])
+    ws.append(["Diamonds Used", diamonds])
+    ws.append(["Score Target", diamonds * 10])
+    ws.append(["Score Utilized", total_used_score])
+    ws.append([])
 
-    for cell in ws["1:1"]:
+    ws.append(["PK Type", "Points Each", "Win Reward Each", "Uses", "Total Points", "Total Reward"])
+    for row in allocation:
+        ws.append([
+            row["PK Type"],
+            row["Points Each"],
+            row["Win Reward Each"],
+            row["Uses"],
+            row["Total Points"],
+            row["Total Reward"]
+        ])
+    for cell in ws["6:6"]:
         cell.font = header_font
 
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(temp_file.name)
     return temp_file.name
 
-# Generate requirements.txt
-def generate_requirements():
-    with open("requirements.txt", "w") as f:
-        f.write("\n".join(["streamlit", "openpyxl", "pandas", "matplotlib"]))
-
 # Streamlit UI
-st.set_page_config(page_title="PK Reward Optimizer", layout="centered")
-st.title("💎 PK Reward Efficiency Calculator")
+st.set_page_config(page_title="PK Reward Maximizer", layout="centered")
+st.title("💎 PK Score-Based Reward Optimizer")
 
 uploaded_file = st.file_uploader("📤 Upload your event Excel file (.xlsx)")
-diamonds = st.number_input("Enter the number of diamonds you have", min_value=0, value=0, step=1)
+diamonds = st.number_input("Enter number of diamonds", min_value=0, value=0, step=1)
 
 if uploaded_file and diamonds:
     try:
         wb = openpyxl.load_workbook(uploaded_file, data_only=True)
-        if "Rules and rewards" in wb.sheetnames:
+        if "Rules and rewards" not in wb.sheetnames:
+            st.error("Sheet 'Rules and rewards' not found.")
+        else:
             sheet = wb["Rules and rewards"]
             pk_data = read_rules_rewards(sheet)
-            if not pk_data:
-                st.warning("No valid data found in the sheet.")
+            score_limit = diamonds * 10
+
+            allocation, total_used_score = optimize_rewards(pk_data, score_limit)
+
+            if allocation:
+                st.success("✅ Optimization complete.")
+                st.write(f"💎 Diamonds: {diamonds}")
+                st.write(f"🏁 Score Limit: {score_limit}")
+                st.write(f"🔥 Score Used: {total_used_score}")
+
+                df = pd.DataFrame(allocation)
+                st.dataframe(df, use_container_width=True)
+
+                excel_file = generate_excel(allocation, diamonds, total_used_score)
+                with open(excel_file, "rb") as f:
+                    st.download_button("📥 Download Excel Breakdown", f, file_name="pk_reward_allocation.xlsx")
+                os.remove(excel_file)
             else:
-                optimal = calculate_efficiency(pk_data, diamonds)
-
-                df = pd.DataFrame(pk_data)
-                df["Efficiency"] = df["win_reward"] / df["diamonds_needed"]
-                df_filtered = df[df["diamonds_needed"] <= diamonds]
-
-                # 📊 Efficiency chart
-                st.subheader("📊 Reward Efficiency by PK Type")
-                x_labels = df_filtered["pk_type"].astype(str)
-                efficiency_values = df_filtered["Efficiency"].astype(float)
-                fig, ax = plt.subplots()
-                ax.bar(x_labels, efficiency_values, color="mediumseagreen")
-                ax.set_ylabel("Reward per Diamond")
-                ax.set_xlabel("PK Type")
-                ax.set_title("Efficiency Overview")
-                plt.xticks(rotation=45)
-                st.pyplot(fig)
-
-                # 📋 Option table
-                st.subheader("📋 Available PK Options")
-                st.dataframe(df_filtered[["pk_type", "diamonds_needed", "win_reward", "Efficiency"]]
-                             .sort_values(by="Efficiency", ascending=False),
-                             use_container_width=True)
-
-                # 🏆 Optimal result
-                if optimal:
-                    st.success("🏆 Most Efficient PK Reward Found:")
-                    st.markdown(f"""
-                        - **PK Type**: {optimal['pk_type']}  
-                        - **Diamonds Needed**: {optimal['diamonds_needed']}  
-                        - **Win Reward**: {optimal['win_reward']}  
-                        - **Efficiency**: {round(optimal['win_reward'] / optimal['diamonds_needed'], 2)} reward/diamond
-                    """)
-
-                    file_path = generate_excel(optimal, diamonds)
-                    with open(file_path, "rb") as f:
-                        st.download_button("📥 Download Excel Breakdown", f, file_name="pk_efficiency_breakdown.xlsx")
-
-                    os.remove(file_path)
-                else:
-                    st.warning("No eligible PK found for your diamond amount.")
-        else:
-            st.error("Sheet 'Rules and rewards' not found in uploaded file.")
+                st.warning("No PK options fit within your score limit.")
     except Exception as e:
-        st.error(f"Error processing file: {e}")
-
-generate_requirements()
+        st.error(f"⚠️ Error processing file: {e}")
