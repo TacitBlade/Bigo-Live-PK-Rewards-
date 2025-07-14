@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
-from itertools import combinations
 from io import BytesIO
 
-# --- Dataset ---
+# --- PK Rebate Dataset ---
 rebate_data = {
     "Daily PK": [
         {"PK points": 7000, "Diamonds": 700, "Win Beans": 210, "Rebate %": 0.3},
@@ -31,62 +30,42 @@ rebate_data = {
     ]
 }
 
-# --- Combo Generator ---
-def get_all_entries(data):
-    all_items = []
-    for pk_type, entries in data.items():
-        for e in entries:
-            item = {**e, "PK Type": pk_type}
-            all_items.append(item)
-    return all_items
+# --- Helpers ---
+def sanitize_data(data):
+    all_entries = []
+    for pk_type, tiers in data.items():
+        for e in tiers:
+            entry = {**e, "PK Type": pk_type}
+            all_entries.append(entry)
+    return pd.DataFrame(all_entries)
 
-def generate_combinations(all_entries, diamond_limit, max_combo_size=4):
-    valid_combos = []
-    for r in range(1, max_combo_size + 1):
-        for combo in combinations(all_entries, r):
-            total_diamonds = sum(e["Diamonds"] for e in combo)
-            if total_diamonds <= diamond_limit:
-                valid_combos.append(combo)
-    return valid_combos
+def filter_by_diamonds(df, diamond_limit):
+    return df[df["Diamonds"] <= diamond_limit].copy()
 
-def summarize_combo(combo):
-    summary = {
-        "Total Diamonds": sum(e["Diamonds"] for e in combo),
-        "Total Win Beans": sum(e["Win Beans"] for e in combo),
-        "Average Rebate %": round(sum(e["Rebate %"] for e in combo) / len(combo), 3),
-    }
-    for i, e in enumerate(combo):
-        summary[f"Tier {i+1}"] = (
-            f'{e["PK Type"]}: {e["PK points"]} pts | '
-            f'{e["Diamonds"]}💎 | {e["Win Beans"]}🫘 | {e["Rebate %"]:.2f}'
-        )
-    return summary
-
-# --- Excel Export ---
 def generate_excel_download(df, filename):
     buffer = BytesIO()
     df.to_excel(buffer, index=False, engine='openpyxl')
     buffer.seek(0)
-    st.download_button("📥 Download Results", data=buffer, file_name=filename,
+    st.download_button("📥 Download Excel", data=buffer, file_name=filename,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # --- Streamlit App ---
-st.set_page_config(page_title="PK Combo Finder", layout="centered")
-st.title("💎 PK Tier Combo Finder")
+st.set_page_config(page_title="PK Rebate Explorer", layout="centered")
+st.title("💎 PK Rebate Explorer")
 
-diamond_input = st.number_input("Enter your available Diamonds", min_value=0, value=9000, step=100)
+diamond_input = st.number_input("Enter your available Diamonds", min_value=0, value=1000, step=100)
+sort_by = st.selectbox("Sort by", ["Win Beans", "Rebate %"])
 
-entries = get_all_entries(rebate_data)
-combos = generate_combinations(entries, diamond_input, max_combo_size=4)
+df_all = sanitize_data(rebate_data)
+df_filtered = filter_by_diamonds(df_all, diamond_input)
 
-if combos:
-    results = pd.DataFrame([summarize_combo(c) for c in combos])
-    results = results.sort_values(by="Total Win Beans", ascending=False)
-    st.subheader(f"🔍 Found {len(results)} Valid Combos (Up to 4 PKs)")
-    st.dataframe(results.reset_index(drop=True))
-    generate_excel_download(results, f"combo_results_{diamond_input}.xlsx")
+if not df_filtered.empty:
+    df_sorted = df_filtered.sort_values(by=sort_by, ascending=False).reset_index(drop=True)
+    st.subheader("📊 Matching PK Tiers")
+    st.dataframe(df_sorted)
+    generate_excel_download(df_sorted, f"pk_tiers_{diamond_input}.xlsx")
 else:
-    st.warning("No valid PK combinations found within your diamond amount.")
+    st.warning("No PK tiers available within that diamond budget.")
 
 with st.expander("🛠 Debug Panel", expanded=False):
     st.json({k: v[:1] for k, v in rebate_data.items()})
