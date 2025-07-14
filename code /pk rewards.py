@@ -31,3 +31,4 @@ def calculate_efficiency(pk_data, diamonds_available):
     if not options:
         return None
     return max(options, key
+    )
