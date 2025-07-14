@@ -7,7 +7,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Read valid PK data from sheet
+# Read and validate PK rules and rewards
 def read_rules_rewards(sheet):
     pk_data = []
     for row in sheet.iter_rows(min_row=2, values_only=True):
@@ -27,14 +27,14 @@ def read_rules_rewards(sheet):
         })
     return pk_data
 
-# Determine most efficient PK option
+# Compute most efficient PK
 def calculate_efficiency(pk_data, diamonds_available):
     options = [pk for pk in pk_data if pk["diamonds_needed"] <= diamonds_available]
     if not options:
         return None
     return max(options, key=lambda x: x["win_reward"] / x["diamonds_needed"])
 
-# Create styled Excel breakdown
+# Create Excel file for optimal PK breakdown
 def generate_excel(optimal_pk, diamonds_available):
     wb = Workbook()
     ws = wb.active
@@ -48,20 +48,19 @@ def generate_excel(optimal_pk, diamonds_available):
     ws.append(["Win Reward", optimal_pk["win_reward"]])
     ws.append(["Efficiency (Reward/Diamond)", round(optimal_pk["win_reward"] / optimal_pk["diamonds_needed"], 2)])
 
-    for row in ws.iter_rows(min_row=1, max_row=1):
-        for cell in row:
-            cell.font = header_font
+    for cell in ws["1:1"]:
+        cell.font = header_font
 
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(temp_file.name)
     return temp_file.name
 
-# Generate requirements file
+# Generate requirements.txt
 def generate_requirements():
     with open("requirements.txt", "w") as f:
         f.write("\n".join(["streamlit", "openpyxl", "pandas", "matplotlib"]))
 
-# ----- Streamlit UI -----
+# Streamlit UI
 st.set_page_config(page_title="PK Reward Optimizer", layout="centered")
 st.title("💎 PK Reward Efficiency Calculator")
 
@@ -74,48 +73,53 @@ if uploaded_file and diamonds:
         if "Rules and rewards" in wb.sheetnames:
             sheet = wb["Rules and rewards"]
             pk_data = read_rules_rewards(sheet)
-            optimal = calculate_efficiency(pk_data, diamonds)
-
-            df = pd.DataFrame(pk_data)
-            df["Efficiency"] = df["win_reward"] / df["diamonds_needed"]
-            df_filtered = df[df["diamonds_needed"] <= diamonds]
-
-            # Bar chart
-            st.subheader("📊 Reward Efficiency by PK Type")
-            fig, ax = plt.subplots()
-            ax.bar(df_filtered["pk_type"], df_filtered["Efficiency"], color="mediumseagreen")
-            ax.set_ylabel("Reward per Diamond")
-            ax.set_xlabel("PK Type")
-            ax.set_title("Efficiency Overview")
-            st.pyplot(fig)
-
-            # Data table
-            st.subheader("📋 Available PK Options")
-            st.dataframe(df_filtered[["pk_type", "diamonds_needed", "win_reward", "Efficiency"]]
-                         .sort_values(by="Efficiency", ascending=False),
-                         use_container_width=True)
-
-            # Optimal result
-            if optimal:
-                st.success("🏆 Most Efficient PK Reward Found:")
-                st.markdown(f"""
-                    - **PK Type**: {optimal['pk_type']}  
-                    - **Diamonds Needed**: {optimal['diamonds_needed']}  
-                    - **Win Reward**: {optimal['win_reward']}  
-                    - **Efficiency**: {round(optimal['win_reward'] / optimal['diamonds_needed'], 2)} reward/diamond
-                """)
-
-                file_path = generate_excel(optimal, diamonds)
-                with open(file_path, "rb") as f:
-                    st.download_button("📥 Download Excel Breakdown", f, file_name="pk_efficiency_breakdown.xlsx")
-
-                os.remove(file_path)
+            if not pk_data:
+                st.warning("No valid data found in the sheet.")
             else:
-                st.warning("No eligible PK found for your diamond amount.")
+                optimal = calculate_efficiency(pk_data, diamonds)
+
+                df = pd.DataFrame(pk_data)
+                df["Efficiency"] = df["win_reward"] / df["diamonds_needed"]
+                df_filtered = df[df["diamonds_needed"] <= diamonds]
+
+                # 📊 Efficiency chart
+                st.subheader("📊 Reward Efficiency by PK Type")
+                x_labels = df_filtered["pk_type"].astype(str)
+                efficiency_values = df_filtered["Efficiency"].astype(float)
+                fig, ax = plt.subplots()
+                ax.bar(x_labels, efficiency_values, color="mediumseagreen")
+                ax.set_ylabel("Reward per Diamond")
+                ax.set_xlabel("PK Type")
+                ax.set_title("Efficiency Overview")
+                plt.xticks(rotation=45)
+                st.pyplot(fig)
+
+                # 📋 Option table
+                st.subheader("📋 Available PK Options")
+                st.dataframe(df_filtered[["pk_type", "diamonds_needed", "win_reward", "Efficiency"]]
+                             .sort_values(by="Efficiency", ascending=False),
+                             use_container_width=True)
+
+                # 🏆 Optimal result
+                if optimal:
+                    st.success("🏆 Most Efficient PK Reward Found:")
+                    st.markdown(f"""
+                        - **PK Type**: {optimal['pk_type']}  
+                        - **Diamonds Needed**: {optimal['diamonds_needed']}  
+                        - **Win Reward**: {optimal['win_reward']}  
+                        - **Efficiency**: {round(optimal['win_reward'] / optimal['diamonds_needed'], 2)} reward/diamond
+                    """)
+
+                    file_path = generate_excel(optimal, diamonds)
+                    with open(file_path, "rb") as f:
+                        st.download_button("📥 Download Excel Breakdown", f, file_name="pk_efficiency_breakdown.xlsx")
+
+                    os.remove(file_path)
+                else:
+                    st.warning("No eligible PK found for your diamond amount.")
         else:
             st.error("Sheet 'Rules and rewards' not found in uploaded file.")
     except Exception as e:
         st.error(f"Error processing file: {e}")
 
-# Generate requirements file
 generate_requirements()
