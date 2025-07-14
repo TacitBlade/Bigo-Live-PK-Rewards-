@@ -2,3 +2,5 @@ streamlit
 openpyxl
 pandas
 matplotlib
+plotly
+openpyxl  # only needed if you're saving .xlsx files
