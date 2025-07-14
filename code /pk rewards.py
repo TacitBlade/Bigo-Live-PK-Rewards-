@@ -7,16 +7,18 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Read PK rules and rewards from sheet
+# Read valid PK data from sheet
 def read_rules_rewards(sheet):
     pk_data = []
     for row in sheet.iter_rows(min_row=2, values_only=True):
         pk_type, pk_points, win_reward = row[0], row[1], row[2]
 
-        if not isinstance(pk_points, (int, float)) or pk_points is None:
+        if pk_type is None or pk_points is None or win_reward is None:
+            continue
+        if not isinstance(pk_points, (int, float)):
             continue
 
-        diamonds_needed = int(pk_points / 10)  # Remove one zero by dividing
+        diamonds_needed = int(pk_points / 10)
         pk_data.append({
             "pk_type": pk_type,
             "pk_points": pk_points,
@@ -25,14 +27,14 @@ def read_rules_rewards(sheet):
         })
     return pk_data
 
-# Choose the most efficient PK option
+# Determine most efficient PK option
 def calculate_efficiency(pk_data, diamonds_available):
     options = [pk for pk in pk_data if pk["diamonds_needed"] <= diamonds_available]
     if not options:
         return None
     return max(options, key=lambda x: x["win_reward"] / x["diamonds_needed"])
 
-# Generate styled Excel breakdown
+# Create styled Excel breakdown
 def generate_excel(optimal_pk, diamonds_available):
     wb = Workbook()
     ws = wb.active
@@ -54,7 +56,7 @@ def generate_excel(optimal_pk, diamonds_available):
     wb.save(temp_file.name)
     return temp_file.name
 
-# Create requirements.txt file dynamically
+# Generate requirements file
 def generate_requirements():
     with open("requirements.txt", "w") as f:
         f.write("\n".join(["streamlit", "openpyxl", "pandas", "matplotlib"]))
@@ -74,7 +76,6 @@ if uploaded_file and diamonds:
             pk_data = read_rules_rewards(sheet)
             optimal = calculate_efficiency(pk_data, diamonds)
 
-            # DataFrame for chart and table
             df = pd.DataFrame(pk_data)
             df["Efficiency"] = df["win_reward"] / df["diamonds_needed"]
             df_filtered = df[df["diamonds_needed"] <= diamonds]
@@ -116,5 +117,5 @@ if uploaded_file and diamonds:
     except Exception as e:
         st.error(f"Error processing file: {e}")
 
-# Generate requirements.txt file
+# Generate requirements file
 generate_requirements()
