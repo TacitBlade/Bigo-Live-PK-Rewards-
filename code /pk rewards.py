@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from io import BytesIO
 
-# Clean rebate dataset
+# --- Clean Rebate Data ---
 rebate_data = {
     "Daily PK": [
         {"PK points": 7000, "Diamonds": 700, "Win Beans": 210, "Rebate %": 0.3},
@@ -30,104 +31,92 @@ rebate_data = {
     ]
 }
 
+# --- Helpers ---
 def sanitize_rebate_data(data):
-    cleaned = {}
+    return {
+        pk_type: [e for e in entries if isinstance(e, dict) and
+                  all(k in e for k in ["Diamonds", "Win Beans", "Rebate %", "PK points"])]
+        for pk_type, entries in data.items()
+    }
+
+def filter_by_diamonds(data, diamond_input):
+    results = []
     for pk_type, entries in data.items():
-        safe_entries = []
-        for entry in entries:
-            if isinstance(entry, dict) and all(k in entry for k in ["Diamonds", "Win Beans", "Rebate %", "PK points"]):
-                safe_entries.append(entry)
-        cleaned[pk_type] = safe_entries
-    return cleaned
+        for e in entries:
+            if e["Diamonds"] <= diamond_input:
+                e = e.copy()
+                e["PK Type"] = pk_type
+                results.append(e)
+    return pd.DataFrame(results)
 
-rebate_data = sanitize_rebate_data(rebate_data)
+def filter_by_goal(data, bean_goal):
+    results = []
+    for pk_type, entries in data.items():
+        for e in entries:
+            if e["Win Beans"] >= bean_goal:
+                e = e.copy()
+                e["PK Type"] = pk_type
+                results.append(e)
+    return pd.DataFrame(results)
 
-# 🎯 Start of App
+def show_best(df, key_fields=["PK Type", "Diamonds", "Win Beans", "Rebate %"]):
+    best = df.iloc[0]
+    st.subheader("🏆 Best Match")
+    for field in key_fields:
+        val = f'{best[field]*100:.2f}%' if "Rebate %" in field else best[field]
+        st.metric(label=field, value=val)
+
+def show_chart(df):
+    df["Beans per Diamond"] = df["Win Beans"] / df["Diamonds"]
+    fig = px.bar(df, x="PK Type", y="Beans per Diamond", color="PK Type", title="Efficiency")
+    st.plotly_chart(fig)
+
+def generate_excel_download(dataframe, filename, label="📥 Download Excel"):
+    buffer = BytesIO()
+    dataframe.to_excel(buffer, index=False, engine='openpyxl')
+    buffer.seek(0)
+    st.download_button(label=label, data=buffer, file_name=filename,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# --- App Interface ---
 st.set_page_config(page_title="PK Rebate Explorer", layout="wide")
 st.title("💎→🫘 PK Rebate Explorer")
 
+rebate_data = sanitize_rebate_data(rebate_data)
 tab1, tab2 = st.tabs(["💎 Diamond-Based Search", "🫘 Goal-Based Search"])
 
 with tab1:
-    st.header("🔍 Search by Available Diamonds")
-    diamond_input = st.number_input("Enter Diamond Amount", min_value=0, value=1000, step=100)
-    sort_by = st.selectbox("Sort By", ["Win Beans", "Rebate %"], key="sort1")
+    st.header("💠 Filter by Diamond Budget")
+    diamonds = st.number_input("Diamond Amount", min_value=0, value=1000, step=100)
+    sort1 = st.selectbox("Sort by", ["Win Beans", "Rebate %"], key="sort1")
     
-    results = []
-    for pk_type, entries in rebate_data.items():
-        for entry in entries:
-            if entry["Diamonds"] <= diamond_input:
-                new_entry = entry.copy()
-                new_entry["PK Type"] = pk_type
-                results.append(new_entry)
-    
-    if results:
-        df = pd.DataFrame(results)
-        if sort_by == "Win Beans":
-            df = df.sort_values(by="Win Beans", ascending=False)
-        else:
-            df = df.sort_values(by="Rebate %", ascending=False)
-        
-        best = df.iloc[0]
-        st.subheader("🏆 Best Match")
-        st.metric("PK Type", best["PK Type"])
-        st.metric("Diamonds", best["Diamonds"])
-        st.metric("Win Beans", best["Win Beans"])
-        st.metric("Rebate %", f'{best["Rebate %"] * 100:.2f}%')
-
-        st.subheader("📊 All Matching Options")
-        st.dataframe(df.reset_index(drop=True))
-
-        st.subheader("📉 Efficiency Graph")
-        df["Beans per Diamond"] = df["Win Beans"] / df["Diamonds"]
-        fig = px.bar(df, x="PK Type", y="Beans per Diamond", color="PK Type", title="Efficiency")
-        st.plotly_chart(fig)
-
-        st.download_button("📥 Download Results", df.to_excel(index=False), file_name=f"diamond_search_{diamond_input}.xlsx")
-
+    df1 = filter_by_diamonds(rebate_data, diamonds)
+    if not df1.empty:
+        df1 = df1.sort_values(by=sort1, ascending=False)
+        show_best(df1)
+        st.subheader("📊 Matching Options")
+        st.dataframe(df1.reset_index(drop=True))
+        show_chart(df1)
+        generate_excel_download(df1, f"diamond_search_{diamonds}.xlsx")
     else:
-        st.warning("No matching options found for that diamond amount.")
+        st.warning("No matching results for that diamond amount.")
 
 with tab2:
-    st.header("🎯 Search by Goal Win Beans")
-    bean_goal = st.number_input("Enter Desired Win Beans", min_value=0, value=1000, step=50)
-    sort_by2 = st.selectbox("Sort By", ["Diamonds", "Rebate %"], key="sort2")
-
-    recommendations = []
-    for pk_type, entries in rebate_data.items():
-        for entry in entries:
-            if entry["Win Beans"] >= bean_goal:
-                e = entry.copy()
-                e["PK Type"] = pk_type
-                recommendations.append(e)
-
-    if recommendations:
-        df2 = pd.DataFrame(recommendations)
-        if sort_by2 == "Diamonds":
-            df2 = df2.sort_values(by="Diamonds")
-        else:
-            df2 = df2.sort_values(by="Rebate %", ascending=False)
-
-        top = df2.iloc[0]
-        st.subheader("🏅 Recommended Tier")
-        st.metric("PK Type", top["PK Type"])
-        st.metric("Diamonds", top["Diamonds"])
-        st.metric("Win Beans", top["Win Beans"])
-        st.metric("Rebate %", f'{top["Rebate %"] * 100:.2f}%')
-
-        st.subheader("📊 All Recommendations")
+    st.header("🎯 Filter by Desired Win Beans")
+    beans = st.number_input("Win Beans Goal", min_value=0, value=1000, step=50)
+    sort2 = st.selectbox("Sort by", ["Diamonds", "Rebate %"], key="sort2")
+    
+    df2 = filter_by_goal(rebate_data, beans)
+    if not df2.empty:
+        df2 = df2.sort_values(by=sort2, ascending=(sort2 == "Diamonds"))
+        show_best(df2)
+        st.subheader("📊 Recommended Tiers")
         st.dataframe(df2.reset_index(drop=True))
-
-        st.subheader("📉 Efficiency Graph")
-        df2["Beans per Diamond"] = df2["Win Beans"] / df2["Diamonds"]
-        fig2 = px.bar(df2, x="PK Type", y="Beans per Diamond", color="PK Type", title="Efficiency")
-        st.plotly_chart(fig2)
-
-        st.download_button("📥 Download Recommendations", df2.to_excel(index=False), file_name=f"goal_search_{bean_goal}.xlsx")
+        show_chart(df2)
+        generate_excel_download(df2, f"goal_search_{beans}.xlsx")
     else:
-        st.warning("No rebate tiers meet or exceed that win bean goal.")
+        st.warning("No rebate tiers meet or exceed that goal.")
 
-# 🧪 Debug Panel
-with st.expander("🧪 Debug Info"):
-    st.write("💎 Rebate Data Sample:")
+# --- Debug Info ---
+with st.expander("🛠 Debug Panel"):
     st.json({k: v[:1] for k, v in rebate_data.items()})
